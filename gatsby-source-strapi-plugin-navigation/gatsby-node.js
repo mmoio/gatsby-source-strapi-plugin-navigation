@@ -1,66 +1,64 @@
-const fetch = require("isomorphic-unfetch");
+const fetch = require('node-fetch');
 
-const getNavigationByID = (apiBase, navIDs) =>
-  Promise.all(
-    navIDs.map(async (id) => {
-      console.info(`Starting to fetch data from Strapi - ${apiBase}/${id}`);
-      const response = await fetch(`${apiBase}/${id}`);
-      navigation = response.json();
-      if (!response.ok) {
-        throw `Error fetching the navigations by IDs - Server reponse with ${response.status}`;
-      }
-      return navigation;
+function buildUrls(navigation, apiURL, type) {
+  const getUrl = id =>
+    `${apiURL}/api/navigation/render/${id}${type ? `?type=${type}` : ''}`;
+
+  return navigation.map(navigationObj => getUrl(navigationObj.id));
+}
+
+const fetchNavigationItems = async (urls, headers) => {
+  return await Promise.all(
+    urls.map(async u => {
+      const response = await fetch(u, {
+        headers: headers,
+      });
+      return await response.json();
+    })
+  );
+};
+
+const STRAPI_NODE_TYPE = `StrapiNavigation`;
+
+exports.sourceNodes = async (
+  { actions: { createNode }, createNodeId, createContentDigest, reporter },
+  { apiURL, token, navigation, type, languages }
+) => {
+  const urls = buildUrls(navigation, apiURL, type, languages);
+
+  const headers = {};
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const navigationItemsArr = await fetchNavigationItems(urls, headers);
+
+  navigationItemsArr.map((navigationItems, index) =>
+    navigationItems.map(item => {
+
+      const keys = {};
+      Object.entries(navigation[index]).forEach(
+        ([key, value]) => (keys[key] = value)
+      );
+
+      const node = {
+        ...keys,
+        ...item,
+        id: createNodeId(`${STRAPI_NODE_TYPE}-${item.id.toString()}`),
+        parent: null,
+        children: [],
+        internal: {
+          type: STRAPI_NODE_TYPE,
+          content: JSON.stringify(item),
+          contentDigest: createContentDigest(item),
+        },
+      };
+
+
+      createNode(node);
     })
   );
 
-const getAllNavigationID = async (apiBase) => {
-  console.info(`Starting to fetch data from Strapi - ${apiBase}`);
-  const response = await fetch(apiBase);
-  const navigations = await response.json();
-  if (!response.ok) {
-    throw `Error fetching ${apiBase} - Server reponse with ${response.status}`;
-  }
-  const IDs = await navigations.map((menu) => menu.id);
-  // console.log(IDs);
-  return IDs;
-};
-
-// constants for your GraphQL Post and Author types
-const STRAPI_NODE_TYPE = `StrapiNavigation`;
-exports.sourceNodes = async (
-  { actions: { createNode }, createContentDigest, createNodeId, reporter },
-  { apiURL, queryLimit, navigationEndpoint }
-) => {
-  if (!apiURL)
-    return reporter.panic(
-      "gatsby-source-strapi-plugin-navigation: You must provide your strapi apiURL endpoint"
-    );
-
-  // Define API endpoint.
-  let apiBase = `${apiURL}/${navigationEndpoint}`;
-  // const apiEndpoint = `${apiBase}?_limit=${queryLimit}`;
-
-  const allNavigationIDs = await getAllNavigationID(apiBase);
-
-  const allNavigations = await getNavigationByID(apiBase, allNavigationIDs);
-
-  const processNavigation = async (navigation) => ({
-    ...navigation,
-    id: createNodeId(`${STRAPI_NODE_TYPE}-${navigation.id}`),
-    parent: null,
-    children: [],
-    internal: {
-      type: STRAPI_NODE_TYPE,
-      content: JSON.stringify(navigation),
-      contentDigest: createContentDigest(navigation),
-    },
-  });
-
-  await Promise.all(
-    allNavigations.map(async (navigation) =>
-      createNode(await processNavigation(navigation))
-    )
-  );
-
-  return;
+  reporter.success('Successfully sourced all navigation items.');
 };
